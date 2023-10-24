@@ -7,9 +7,7 @@ from contextlib import contextmanager
 
 st.set_page_config(initial_sidebar_state="expanded")
 
-client = pymongo.MongoClient(**st.secrets["mongo"])
-db = client['skin_detector']
-collection = db["passwords"]
+
 
 def get_doctors():
     # Find documents where "doctor" is true
@@ -100,6 +98,10 @@ def validate_user(username, password):
     query = {"username": username, "password": password}
     return collection.find_one(query) is not None
 
+def validate_doctor(username, password):
+    query = {"username": username, "password": password , "doctor":True}
+    return collection.find_one(query) is not None
+
 
 def update_username_section():
     username_updater = st.text_input("Edit your username")
@@ -143,6 +145,10 @@ def update_description_section():
 
 
 
+
+
+
+
 def login():
     if st.session_state.login == False:
         loginholder = st.empty()
@@ -172,9 +178,15 @@ def login():
                 if st.button("Login"):
                     if username and password:
                         if validate_user(username, password):
-                            loginholder_exit = True
-                            st.session_state.username = username
-                            st.session_state.login = True
+                            if validate_doctor(username , password):
+                                loginholder_exit = True
+                                st.session_state.username = username
+                                st.session_state.login = True
+                                st.session_state.isdoctor = username
+                            else:
+                                loginholder_exit = True
+                                st.session_state.username = username
+                                st.session_state.login = True
                         else:
                             st.error("Invalid Username or password")
                     else:
@@ -247,7 +259,7 @@ def chat_page():
 def chat_box():
     # st.warning("To go back please Double click on the go back button")
     # if st.button("Go back"):
-    #     st.session_state.chat == False
+    # st.session_state.chat == False
         
 
     st.title(f"Chat with {st.session_state.doctor}")
@@ -258,7 +270,7 @@ def chat_box():
             chat_collection = db[name]
 
     if chat_collection == "":
-        chat_collection = db[f"{st.session_state.username}{st.session_state.doctor}chat"]
+        chat_collection = db[f"chat-between-{st.session_state.username}-and-{st.session_state.doctor}"]
         # Create the collection if it doesn't exist
 
     # Initialize chat history
@@ -284,6 +296,44 @@ def chat_box():
         chat_collection.insert_one(user_message)
 
 
+def showchats(doctorName):
+    chats_collections = db.list_collection_names()
+    chats_to_be_loaded = []
+    for name in chats_collections:
+        if doctorName in name:
+            chats_to_be_loaded.append(name)
+    if len(chats_to_be_loaded) == 0:
+        st.title("You have no chat history")
+    else:    
+        selected_chat = st.selectbox("Select a chat",chats_to_be_loaded)
+        if selected_chat:
+            loaded_chat_collection = db[selected_chat]
+            # Initialize chat history
+            chat_cursor = loaded_chat_collection.find({})
+
+            # Display chat messages from the database on app rerun
+            for message in chat_cursor:
+                with st.chat_message(message["role"]):
+                    username = message["username"]
+                    content = message["content"]
+                    if username == st.session_state.username:
+                        st.markdown(f"YOU : {content}")
+                    else:
+                        st.markdown(f"{username} : {content}")
+
+            # React to user input
+            if prompt := st.chat_input("What is up?", key="chat_2"):
+                # Display user message in chat message container
+                st.chat_message("user").markdown(f"YOU : {prompt}")
+
+                # Add user message to chat history in MongoDB
+                user_message = {"role": "user", "username" : st.session_state.username,"content": prompt}
+                loaded_chat_collection.insert_one(user_message)
+
+
+
+
+
 @st.cache_resource
 def load_model():
     # Load the .h5 model
@@ -305,52 +355,112 @@ def main():
     if not hasattr(st.session_state, 'doctor'):
         st.session_state.doctor = ""
 
+    if not hasattr(st.session_state, 'isdoctor'):
+        st.session_state.isdoctor = ""
+
     login()
 
     if st.session_state.login == True:
-        model = load_model()
+
+        if st.session_state.isdoctor != "":
+
+
+            model = load_model()
+
+            
+        
+            st.sidebar.title(f"Welcome Dr.{st.session_state.isdoctor} !")
+
+            with st.sidebar:
+                navigated = option_menu(
+                    menu_title=None,
+                    options=["Predictor", "View your profile", "Edit your profile", "Chat with a Doctor" , "View your chats"]
+                )
+            
+            
+            if navigated == "Predictor":
+                predictor(model)
+            
+            elif navigated == "View your profile":
+                show_profile(st.session_state.username)
+
+            elif navigated == "Edit your profile":
+                edit_profile()
+            
+            elif navigated == "Chat with a Doctor":
+                chatholder = st.empty()
+                with chatholder.container():
+                    chat_page()
+
+                if st.session_state.chat == True:
+                    chatholder.empty()
+                    
+                    if st.button("Go back"):
+                        st.session_state.chat = False
+                        st.warning("Please click again to go back")
+                    chat_box()
+            
+            elif navigated == "View your chats":
+                showchats(st.session_state.isdoctor)
+
+
+            if st.sidebar.button("Logout"):
+                st.session_state.login = False
+                st.session_state.chat = False
+                st.session_state.isdoctor = ""
+                st.sidebar.warning("Please click again to logout")
+        
+        else:
+            model = load_model()
 
         
+    
+            st.sidebar.title(f"Welcome {st.session_state.username} !")
 
-        st.sidebar.title(f"Welcome {st.session_state.username} !")
+            with st.sidebar:
+                navigated = option_menu(
+                    menu_title=None,
+                    options=["Predictor", "View your profile", "Edit your profile", "Chat with a Doctor", "View your chats"]
+                )
+            
+            
+            if navigated == "Predictor":
+                predictor(model)
+            
+            elif navigated == "View your profile":
+                show_profile(st.session_state.username)
 
-        with st.sidebar:
-            navigated = option_menu(
-                menu_title=None,
-                options=["Predictor", "View your profile", "Edit your profile", "Chat with a Doctor"]
-            )
-        
-        
-        if navigated == "Predictor":
-            predictor(model)
-        
-        elif navigated == "View your profile":
-            show_profile(st.session_state.username)
+            elif navigated == "Edit your profile":
+                edit_profile()
+            elif navigated == "Chat with a Doctor":
+                chatholder = st.empty()
+                with chatholder.container():
+                    chat_page()
 
-        elif navigated == "Edit your profile":
-            edit_profile()
-        elif navigated == "Chat with a Doctor":
-            chatholder = st.empty()
-            with chatholder.container():
-                chat_page()
+                if st.session_state.chat == True:
+                    chatholder.empty()
+                    
+                    if st.button("Go back"):
+                        st.session_state.chat = False
+                        st.warning("Please click again to go back")
+                    chat_box()
 
-            if st.session_state.chat == True:
-                chatholder.empty()
-                
-                if st.button("Go back"):
-                    st.session_state.chat = False
-                    st.warning("Please click again to go back")
-                chat_box()
+            elif navigated == "View your chats":
+                showchats(st.session_state.username)
 
 
-        if st.sidebar.button("Logout"):
-            st.session_state.login = False
-            st.session_state.chat = False
-            st.sidebar.warning("Please click again to logout")
+            if st.sidebar.button("Logout"):
+                st.session_state.login = False
+                st.session_state.chat = False
+                st.session_state.isdoctor = ""
+                st.sidebar.warning("Please click again to logout")
         
 
 
 
 if __name__ == "__main__":
+    client = pymongo.MongoClient("mongodb+srv://skindetectordb:KnBoaadRQPegbk5X@cluster0.frhcf8e.mongodb.net/")
+    db = client['skin_detector']
+    collection = db["passwords"]
     main()
 
